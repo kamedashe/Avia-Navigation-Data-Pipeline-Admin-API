@@ -1,0 +1,29 @@
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+.vscode/
+.idea/
+
+web_scraper/
+venv/
+
+# Ignore version control directories
+.git/
+.gitignore
+
+# Ignore data directories
+processed_data/
+downloaded_data/
+
+# Ignore other unnecessary files
+nohup.out
+
+commands.txt
+
+# Server-only scripts
+download_diagrams.py

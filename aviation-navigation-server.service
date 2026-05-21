@@ -1,0 +1,16 @@
+[Unit]
+Description=Aviation Navigation API Server
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+User=mb
+Group=mb
+WorkingDirectory=/home/mb/remote_server/PycharmProjects/aviation-navigation-server
+Environment="PATH=/home/mb/remote_server/PycharmProjects/aviation-navigation-server/.venv/bin"
+ExecStart=/home/mb/remote_server/PycharmProjects/aviation-navigation-server/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

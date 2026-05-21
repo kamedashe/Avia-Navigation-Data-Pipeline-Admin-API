@@ -1,0 +1,16 @@
+name: avia-nav-server
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: ./app/Dockerfile
+    restart: always
+    volumes:
+      - ./:/code
+      - ./data:/code/data
+      - ./processed_data:/code/processed_data
+      - ./downloaded_data:/code/downloaded_data
+    ports:
+      - "5045:5045"
+    command: [ "gunicorn", "-c", "gunicorn.conf.py", "-b", "0.0.0.0:5045", "app.main:app" ]

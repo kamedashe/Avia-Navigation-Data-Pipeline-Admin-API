@@ -1,0 +1,924 @@
+"""Admin Dashboard Router.
+
+Provides:
+- GET  /admin        → HTML dashboard with glassmorphism UI
+- GET  /api/status   → JSON contents of changes.json
+- POST /api/run/{flag} → trigger scraper flag in background
+"""
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from app.services.file_handlers import enrich_changes_data
+from app.services.task_status import (
+    task_statuses,
+    _status_key,
+    ALLOWED_FLAGS,
+    get_calculated_statuses,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["Admin Dashboard"])
+
+CHANGES_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "changes.json"
+
+# Flags that use the dedicated diagram scraper (not script.py)
+_DIAGRAM_FLAGS = {"a_big", "a_small", "m_sectional"}
+
+# Human-readable labels for each scraper flag
+FLAG_LABELS: dict[str, str] = {
+    "b": "Base Airports",
+    "c": "Class Airspace",
+    "d": "Daily Obstacles",
+    "e": "Special Use Airspace",
+    "f": "Fixes / Waypoints",
+    "g": "Stadiums",
+    "n": "NAV Aids",
+    "r": "Runway Ends",
+    "t": "TFR",
+    "a_big": "Airport Diagrams (Big)",
+    "a_small": "Airport Sketches (Small)",
+    "m_sectional": "VFR Sectional Maps",
+}
+
+# Sync status for rsync from Server B
+_sync_status: dict[str, str] = {"diagrams": "idle"}
+
+# ---------------------------------------------------------------------------
+# Background process launcher (non-blocking)
+# ---------------------------------------------------------------------------
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _monitor_process(proc: subprocess.Popen, flag: str, cmd_str: str) -> None:
+    """Wait for a subprocess to finish and reset the task status.
+
+    Runs in a daemon thread so it never blocks any uvicorn worker.
+    Logs stdout/stderr tails on completion for diagnostics.
+    """
+    key = _status_key(flag)
+    try:
+        stdout, stderr = proc.communicate()  # blocks THIS thread only
+        rc = proc.returncode
+        if rc == 0:
+            logger.info(
+                "Scraper %s finished OK (pid=%d).\nstdout(tail): %s",
+                flag, proc.pid, (stdout or "")[-500:],
+            )
+        else:
+            logger.error(
+                "Scraper %s failed (pid=%d, rc=%d).\nstderr(tail): %s",
+                flag, proc.pid, rc, (stderr or "")[-1000:],
+            )
+    except Exception as exc:
+        logger.exception("Monitor thread for %s crashed: %s", flag, exc)
+    finally:
+        task_statuses[key] = "idle"
+        logger.info("Scraper %s status reset to idle.", flag)
+
+
+def _launch_scraper(flag: str) -> int:
+    """Launch ``python -m web_scraper.script -{flag}`` as a detached process.
+
+    Returns the PID of the spawned process.
+    """
+    cmd = [sys.executable, "-u", "-m", "web_scraper.script", f"-{flag}"]
+    logger.info("Launching scraper: %s  (cwd=%s)", " ".join(cmd), _PROJECT_ROOT)
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(_PROJECT_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    # Lightweight daemon thread to watch for completion
+    watcher = threading.Thread(
+        target=_monitor_process,
+        args=(proc, flag, " ".join(cmd)),
+        name=f"scraper-{flag}-{proc.pid}",
+        daemon=True,
+    )
+    watcher.start()
+    logger.info("Scraper -%s launched (pid=%d), watcher thread started.", flag, proc.pid)
+    return proc.pid
+
+
+def _launch_diagram_scraper(flag: str) -> int:
+    """Launch ``python -m web_scraper.a_diagrams --{a-big|a-small}`` as a detached process.
+
+    Returns the PID of the spawned process.
+    """
+    cli_arg = f"--{flag.replace('_', '-')}"
+    cmd = [sys.executable, "-u", "-m", "web_scraper.a_diagrams", cli_arg]
+    logger.info("Launching diagram scraper: %s  (cwd=%s)", " ".join(cmd), _PROJECT_ROOT)
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(_PROJECT_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    watcher = threading.Thread(
+        target=_monitor_process,
+        args=(proc, flag, " ".join(cmd)),
+        name=f"diagram-{flag}-{proc.pid}",
+        daemon=True,
+    )
+    watcher.start()
+    logger.info("Diagram scraper %s launched (pid=%d), watcher thread started.", flag, proc.pid)
+    return proc.pid
+
+
+# ---------------------------------------------------------------------------
+# API endpoints
+# ---------------------------------------------------------------------------
+@router.get("/api/status", response_class=JSONResponse)
+def get_status():
+    """Return the current contents of ``changes.json``."""
+    if not CHANGES_FILE.is_file():
+        return JSONResponse(content={}, status_code=200)
+    try:
+        with open(CHANGES_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        # Dynamically compute directory sizes for a_big, a_small, m_sectional
+        enrich_changes_data(data)
+        return JSONResponse(content=data, status_code=200)
+    except (json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read changes.json: {exc}",
+        )
+
+
+@router.get("/api/task-status", response_class=JSONResponse)
+def get_task_status():
+    """Return the current running/idle status for every scraper flag.
+    
+    Includes real-time disk-size validation (ERROR_SIZE) that overrides
+    the volatile in-memory state.
+    """
+    return JSONResponse(content=get_calculated_statuses(), status_code=200)
+
+
+@router.post("/api/run/{flag}")
+async def run_scraper(flag: str, background_tasks: BackgroundTasks):
+    """Launch a scraper for the given flag as a detached background process.
+
+    For ``a_big`` and ``a_small``, triggers rsync from Server B
+    instead of running the diagram scraper locally.
+    """
+    flag = flag.lower().strip()
+    if flag not in ALLOWED_FLAGS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid flag '{flag}'. Allowed: {ALLOWED_FLAGS}",
+        )
+    key = _status_key(flag)
+    if task_statuses.get(key) == "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Task {flag} is already running.",
+        )
+
+    # a_big / a_small → rsync archives from Server B
+    if flag in _DIAGRAM_FLAGS:
+        if _sync_status["diagrams"] == "running":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Diagram sync is already running.",
+            )
+        task_statuses[key] = "running"
+        _sync_status["diagrams"] = "running"
+        background_tasks.add_task(_sync_archives_from_server_b)
+        return {
+            "status": "ok",
+            "message": f"Syncing diagram archives from Server B (triggered by {flag}).",
+        }
+
+    # All other flags → local scraper subprocess
+    task_statuses[key] = "running"
+    pid = _launch_scraper(flag)
+    return {"status": "ok", "message": f"Task {flag} started in background", "pid": pid}
+
+
+# ---------------------------------------------------------------------------
+# Diagram archives sync from Server B (rsync over SSH)
+# ---------------------------------------------------------------------------
+_DEST_DIR = str(_PROJECT_ROOT / "downloaded_data")
+
+
+def _sync_archives_from_server_b() -> None:
+    """Pull a-big.tar.gz and a-small.tar.gz from Server B via rsync.
+
+    Runs inside a FastAPI BackgroundTask so the HTTP response returns
+    immediately while the transfer (~50-100 MB) completes in the
+    background.
+    """
+    try:
+        logger.info("rsync: starting diagram/map sync from Server B…")
+        
+        # Verify rsync is installed
+        if shutil.which("rsync") is None:
+            logger.error("rsync command not found. Please install rsync on the host or in the container.")
+            return
+
+        # 1. Sync archives (a_big, a_small)
+        rsync_source = os.getenv("RSYNC_SOURCE", "mb@127.0.0.1:/home/mb/faa_vfr")
+        for archive in ["a-big.tar.gz", "a-small.tar.gz"]:
+            cmd = [
+                "rsync", "-avz", "--timeout=120", "-e", "ssh -p 464 -o StrictHostKeyChecking=no",
+                f"{rsync_source}/{archive}",
+                _DEST_DIR,
+            ]
+            logger.info("rsync archive cmd: %s", " ".join(cmd))
+            subprocess.run(cmd, capture_output=True, text=True)
+
+        # 2. Sync sectional maps directory (more efficient for 56+ files)
+        maps_dest = str(_PROJECT_ROOT / "data" / "maps" / "out_mbtiles")
+        os.makedirs(maps_dest, exist_ok=True)
+        cmd_maps = [
+            "rsync", "-avz", "--delete", "--timeout=120", "-e", "ssh -p 464 -o StrictHostKeyChecking=no",
+            f"{rsync_source}/out_mbtiles/",
+            maps_dest,
+        ]
+        logger.info("rsync maps cmd: %s", " ".join(cmd_maps))
+        subprocess.run(cmd_maps, capture_output=True, text=True)
+
+        logger.info("rsync: sync finished.")
+    except Exception as exc:
+        logger.exception("rsync sync failed: %s", exc)
+    finally:
+        _sync_status["diagrams"] = "idle"
+        # Reset Update button statuses so they unlock in the dashboard
+        for flag in ["a_big", "a_small", "m_sectional"]:
+            task_statuses[flag] = "idle"
+
+
+# ---------------------------------------------------------------------------
+# Admin HTML dashboard
+# ---------------------------------------------------------------------------
+@router.get("/admin", response_class=HTMLResponse)
+def admin_dashboard():
+    """Serve the admin dashboard as a single-page HTML response."""
+    auth_token = os.getenv("AUTH_TOKEN", "")
+    html = _build_dashboard_html(auth_token)
+    return HTMLResponse(content=html, status_code=200)
+
+
+def _build_dashboard_html(auth_token: str) -> str:
+    """Return the full HTML string for the admin dashboard."""
+    html_template = r"""<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Avia Navigation — Admin Dashboard</title>
+  <meta name="description" content="Admin control panel for Avia Navigation data pipeline"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            surface: {
+              50:  '#f0f4ff',
+              100: '#e0e8ff',
+              200: '#c7d4fe',
+              700: '#1e2a4a',
+              800: '#141d35',
+              900: '#0b1120',
+              950: '#060a17',
+            },
+            accent: {
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+            },
+            emerald: {
+              400: '#34d399',
+              500: '#10b981',
+            },
+            amber: {
+              400: '#fbbf24',
+              500: '#f59e0b',
+            },
+          },
+        },
+      },
+    }
+  </script>
+  <style>
+    /* --- Glassmorphism & Animations --- */
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #060a17;
+      min-height: 100vh;
+    }
+    .glass {
+      background: rgba(20, 29, 53, 0.55);
+      backdrop-filter: blur(24px) saturate(1.4);
+      -webkit-backdrop-filter: blur(24px) saturate(1.4);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .glass-card {
+      background: rgba(30, 42, 74, 0.45);
+      backdrop-filter: blur(16px) saturate(1.2);
+      -webkit-backdrop-filter: blur(16px) saturate(1.2);
+      border: 1px solid rgba(255,255,255,0.05);
+      transition: transform 0.25s cubic-bezier(.4,0,.2,1), box-shadow 0.25s cubic-bezier(.4,0,.2,1), border-color 0.25s;
+    }
+    .glass-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 40px rgba(59,130,246,0.12);
+      border-color: rgba(96,165,250,0.18);
+    }
+    .glow-orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.18;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .btn-run {
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(.4,0,.2,1);
+    }
+    .btn-run::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(59,130,246,0.25), rgba(16,185,129,0.15));
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .btn-run:hover::before { opacity: 1; }
+    .btn-run:active { transform: scale(0.96); }
+    .btn-run:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+    .btn-run:disabled::before { opacity: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #60a5fa;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-card { animation: fadeInUp 0.45s cubic-bezier(.4,0,.2,1) both; }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .pulse-live { animation: pulse-dot 2s ease-in-out infinite; }
+    /* ── ERROR_SIZE visual system ──────────────────────────────── */
+    @keyframes pulse-error {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+      50% { box-shadow: 0 0 16px 6px rgba(239,68,68,0.25); }
+    }
+    @keyframes pulse-error-border {
+      0%, 100% { border-color: rgba(239,68,68,0.25); }
+      50% { border-color: rgba(248,113,113,0.55); }
+    }
+    @keyframes shake-subtle {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-2px); }
+      40% { transform: translateX(2px); }
+      60% { transform: translateX(-1px); }
+      80% { transform: translateX(1px); }
+    }
+    .badge-error {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(239,68,68,0.2);
+      border: 1px solid rgba(248,113,113,0.5);
+      color: #ff4444;
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border-radius: 8px;
+      animation: pulse-error 1.8s ease-in-out infinite;
+      cursor: help;
+      white-space: nowrap;
+    }
+    .badge-error .err-icon {
+      font-size: 13px;
+      line-height: 1;
+      animation: shake-subtle 2s ease-in-out infinite;
+    }
+    /* Entire table row glow when ERROR_SIZE */
+    .row-error {
+      background: rgba(239,68,68,0.06) !important;
+      border-left: 3px solid #ef4444 !important;
+      animation: pulse-error-border 2s ease-in-out infinite;
+    }
+    .row-error:hover {
+      background: rgba(239,68,68,0.10) !important;
+    }
+    /* Mobile card error state */
+    .card-error {
+      background: rgba(239,68,68,0.08) !important;
+      border: 1px solid rgba(248,113,113,0.35) !important;
+      animation: pulse-error-border 2s ease-in-out infinite;
+    }
+    /* Error banner at top of dashboard */
+    .error-banner {
+      background: rgba(239,68,68,0.12);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 1rem;
+      padding: 0.85rem 1.25rem;
+      display: none;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      animation: fadeInUp 0.4s cubic-bezier(.4,0,.2,1) both;
+    }
+    .error-banner.visible { display: flex; }
+    .error-banner .banner-icon {
+      font-size: 1.5rem;
+      animation: shake-subtle 2.5s ease-in-out infinite;
+    }
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      z-index: 100;
+      padding: 0.85rem 1.5rem;
+      border-radius: 0.75rem;
+      font-weight: 500;
+      font-size: 0.875rem;
+      color: #fff;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.35s cubic-bezier(.4,0,.2,1);
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .toast-success { background: rgba(16,185,129,0.85); backdrop-filter: blur(12px); border: 1px solid rgba(52,211,153,0.3); }
+    .toast-error   { background: rgba(239,68,68,0.85);  backdrop-filter: blur(12px); border: 1px solid rgba(248,113,113,0.3); }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(96,165,250,0.2); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(96,165,250,0.35); }
+
+    /* Table row hover */
+    .row-hover { transition: background 0.2s; }
+    .row-hover:hover { background: rgba(96,165,250,0.06) !important; }
+  </style>
+</head>
+<body class="text-gray-200 overflow-x-hidden">
+
+  <!-- Decorative background orbs -->
+  <div class="glow-orb" style="width:600px;height:600px;top:-10%;left:-8%;background:radial-gradient(circle,#3b82f6,transparent 70%)"></div>
+  <div class="glow-orb" style="width:500px;height:500px;bottom:-5%;right:-5%;background:radial-gradient(circle,#10b981,transparent 70%)"></div>
+  <div class="glow-orb" style="width:350px;height:350px;top:40%;left:50%;background:radial-gradient(circle,#8b5cf6,transparent 70%);opacity:0.10"></div>
+
+  <div class="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+
+    <!-- Header -->
+    <header class="mb-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-blue-400 via-cyan-300 to-emerald-400 bg-clip-text text-transparent">
+          Avia Navigation
+        </h1>
+        <p class="mt-1 text-sm text-gray-400 font-medium tracking-wide">Data Pipeline — Admin Dashboard</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="pulse-live inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-lg shadow-emerald-400/30"></span>
+        <span class="text-xs text-gray-400 uppercase tracking-widest font-semibold">System Online</span>
+        <button onclick="refreshStatus()" id="refreshBtn"
+                class="ml-4 glass rounded-xl px-4 py-2 text-xs font-semibold text-blue-300 hover:text-white hover:border-blue-400/30 transition-all flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+          Refresh
+        </button>
+      </div>
+    </header>
+
+    <!-- Error Banner (hidden by default, shown when any flag has ERROR_SIZE) -->
+    <div id="errorBanner" class="error-banner">
+      <span class="banner-icon">🚨</span>
+      <div>
+        <p class="text-sm font-bold text-red-300">Safety Block Active</p>
+        <p class="text-xs text-red-400/80 mt-0.5" id="errorBannerDetail">One or more files exceed the safety size limit (×5) and are blocked from download.</p>
+      </div>
+    </div>
+
+    <!-- Stats Summary Bar -->
+    <div id="statsBar" class="glass rounded-2xl p-5 mb-8 grid grid-cols-2 sm:grid-cols-5 gap-4 animate-card" style="animation-delay:0.05s">
+      <div class="text-center">
+        <p class="text-2xl font-bold text-white" id="statTotal">—</p>
+        <p class="text-xs text-gray-400 mt-1">Total Flags</p>
+      </div>
+      <div class="text-center">
+        <p class="text-2xl font-bold text-emerald-400" id="statUpdated">—</p>
+        <p class="text-xs text-gray-400 mt-1">Updated</p>
+      </div>
+      <div class="text-center">
+        <p class="text-2xl font-bold text-amber-400" id="statStale">—</p>
+        <p class="text-xs text-gray-400 mt-1">Stale (&gt;7d)</p>
+      </div>
+      <div class="text-center">
+        <p class="text-2xl font-bold text-blue-300" id="statTotalSize">—</p>
+        <p class="text-xs text-gray-400 mt-1">Total Data</p>
+      </div>
+      <div class="text-center" id="statErrorsBlock">
+        <p class="text-2xl font-bold text-red-400" id="statErrors">0</p>
+        <p class="text-xs text-gray-400 mt-1">⚠ Errors</p>
+      </div>
+    </div>
+
+    <!-- Data Grid -->
+    <div class="glass rounded-2xl overflow-hidden animate-card" style="animation-delay:0.12s">
+      <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Revision Cycle</h2>
+        <span id="lastRefreshed" class="text-xs text-gray-500"></span>
+      </div>
+
+      <!-- Table (desktop) -->
+      <div class="hidden sm:block overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-xs text-gray-500 uppercase tracking-wider border-b border-white/5">
+              <th class="text-left px-6 py-3 font-semibold">Flag</th>
+              <th class="text-left px-6 py-3 font-semibold">Description</th>
+              <th class="text-left px-6 py-3 font-semibold">Last Updated</th>
+              <th class="text-right px-6 py-3 font-semibold">File Size</th>
+              <th class="text-center px-6 py-3 font-semibold">Action</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="5" class="text-center py-12 text-gray-500">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Cards (mobile) -->
+      <div id="mobileCards" class="sm:hidden p-4 space-y-3">
+        <p class="text-center text-gray-500 py-8">Loading…</p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="mt-10 text-center text-xs text-gray-600">
+      Avia Navigation API v1.0 &middot; Admin Panel
+    </footer>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast" class="toast"></div>
+
+<script>
+  // ── Auth ─────────────────────────────────────────────────────────
+  const AUTH_HEADERS = {
+    'Authorization': 'Bearer AUTH_TOKEN_PLACEHOLDER'
+  };
+
+  // ── Flag metadata ────────────────────────────────────────────────
+  const FLAGS = {
+    b: 'Base Airports',
+    c: 'Class Airspace',
+    d: 'Daily Obstacles',
+    e: 'Special Use Airspace',
+    f: 'Fixes / Waypoints',
+    g: 'Stadiums',
+    n: 'NAV Aids',
+    r: 'Runway Ends',
+    t: 'TFR',
+    a_big: 'Airport Diagrams (Big)',
+    a_small: 'Airport Sketches (Small)',
+    m_sectional: 'VFR Sectional Maps',
+  };
+
+  const FLAG_ICONS = {
+    b: '🛩️', c: '🗺️', d: '⚠️', e: '🔒',
+    f: '📍', g: '🏟️', n: '📡', r: '🛬', t: '🚫',
+    a_big: '🗺️', a_small: '✏️', m_sectional: '🧭',
+  };
+
+  // ── Helpers ──────────────────────────────────────────────────────
+  function formatBytes(bytes) {
+    if (bytes == null || bytes === 0) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(2) + ' MB';
+    return (bytes / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function formatTime(epoch) {
+    if (!epoch || epoch === 0) return { text: 'Never', age: Infinity, cls: 'text-gray-500' };
+    const d = new Date(epoch * 1000);
+    const now = Date.now();
+    const ageMs = now - d.getTime();
+    const ageDays = ageMs / 86400000;
+    const cls = ageDays > 7 ? 'text-amber-400' : ageDays > 2 ? 'text-yellow-300' : 'text-emerald-400';
+    const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false };
+    return { text: d.toLocaleDateString('en-US', options), age: ageDays, cls };
+  }
+
+  function relativeTime(epoch) {
+    if (!epoch || epoch === 0) return '';
+    const diff = Math.floor((Date.now() / 1000) - epoch);
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  // ── Toast ────────────────────────────────────────────────────────
+  let toastTimer = null;
+  function showToast(msg, type = 'success') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast toast-' + type + ' show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+  }
+
+  // ── Render ───────────────────────────────────────────────────────
+  function render(data) {
+    const tbody = document.getElementById('tableBody');
+    const mobile = document.getElementById('mobileCards');
+    let rows = '';
+    let cards = '';
+    let updated = 0, stale = 0, totalSize = 0;
+
+    const sortedFlags = Object.keys(FLAGS).sort();
+
+    sortedFlags.forEach((flag, i) => {
+      const ts = data[flag] || 0;
+      const size = data[flag + '_size'] || 0;
+      const { text: timeText, age, cls: timeCls } = formatTime(ts);
+      const rel = relativeTime(ts);
+      const sizeText = formatBytes(size);
+      const label = FLAGS[flag];
+      const icon = FLAG_ICONS[flag] || '📄';
+      // For multi-char flags (a_big, a_small), stale threshold is 60 days
+      const staleThreshold = flag.length > 1 ? 60 : 7;
+
+      if (ts > 0) updated++;
+      if (age > staleThreshold) stale++;
+      totalSize += size;
+
+      const delay = (i * 0.04).toFixed(2);
+
+      // Display code: single-char → "-b", multi-char → "a_big"
+      const flagDisplay = flag.length === 1 ? `-${flag}` : flag;
+
+      // Desktop row — data-flag used by pollTaskStatus for row-level error styling
+      rows += `
+        <tr data-flag="${flag}" class="row-hover border-b border-white/[0.03] animate-card" style="animation-delay:${delay}s">
+          <td class="px-6 py-4">
+            <span class="inline-flex items-center gap-2">
+              <span class="text-lg">${icon}</span>
+              <code class="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 font-mono text-xs font-semibold">${flagDisplay}</code>
+            </span>
+          </td>
+          <td class="px-6 py-4 font-medium text-gray-200">${label}</td>
+          <td class="px-6 py-4">
+            <span class="${timeCls} font-medium">${timeText}</span>
+            ${rel ? `<span class="block text-xs text-gray-500 mt-0.5">${rel}</span>` : ''}
+          </td>
+          <td class="px-6 py-4 text-right font-mono text-gray-300 text-xs">${sizeText}</td>
+          <td class="px-6 py-4 text-center">
+            <button id="btn-${flag}" onclick="runFlag('${flag}')"
+                    class="btn-run glass rounded-xl px-5 py-2 text-xs font-bold text-blue-300 hover:text-white transition-all">
+              <span class="relative z-10 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
+                </svg>
+                Update
+              </span>
+            </button>
+          </td>
+        </tr>`;
+
+      // Mobile card — data-flag-card used by pollTaskStatus for card-level error styling
+      cards += `
+        <div data-flag-card="${flag}" class="glass-card rounded-2xl p-4 animate-card" style="animation-delay:${delay}s">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xl">${icon}</span>
+              <div>
+                <span class="font-semibold text-gray-100 text-sm">${label}</span>
+                <code class="ml-2 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono text-[10px] font-semibold">${flagDisplay}</code>
+              </div>
+            </div>
+            <button id="btn-m-${flag}" onclick="runFlag('${flag}')"
+                    class="btn-run glass rounded-lg px-3 py-1.5 text-xs font-bold text-blue-300">
+              <span class="relative z-10">Update</span>
+            </button>
+          </div>
+          <div class="flex items-center justify-between text-xs">
+            <span class="${timeCls}">${timeText} ${rel ? '<span class="text-gray-500 ml-1">(' + rel + ')</span>' : ''}</span>
+            <span class="font-mono text-gray-400">${sizeText}</span>
+          </div>
+        </div>`;
+    });
+
+    tbody.innerHTML = rows;
+    mobile.innerHTML = cards;
+
+    // Stats bar
+    document.getElementById('statTotal').textContent = sortedFlags.length;
+    document.getElementById('statUpdated').textContent = updated;
+    document.getElementById('statStale').textContent = stale;
+    document.getElementById('statTotalSize').textContent = formatBytes(totalSize);
+    document.getElementById('lastRefreshed').textContent = 'Refreshed ' + new Date().toLocaleTimeString();
+  }
+
+  // ── Fetch status ─────────────────────────────────────────────────
+  async function refreshStatus() {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.querySelector('svg').style.animation = 'spin 0.7s linear infinite';
+    try {
+      const res = await fetch('/api/status', { headers: AUTH_HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      render(data);
+    } catch (e) {
+      showToast('Failed to load status: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.querySelector('svg').style.animation = '';
+    }
+  }
+
+  // ── Trigger flag run ─────────────────────────────────────────────
+  async function runFlag(flag) {
+    const btn = document.getElementById('btn-' + flag);
+    const btnM = document.getElementById('btn-m-' + flag);
+    const buttons = [btn, btnM].filter(Boolean);
+
+    buttons.forEach(b => {
+      b.disabled = true;
+      b.querySelector('.relative').innerHTML = '<span class="spinner"></span> Running…';
+    });
+
+    try {
+      const res = await fetch('/api/run/' + flag, { method: 'POST', headers: AUTH_HEADERS });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      showToast(`Task -${flag} started in background`, 'success');
+
+      // Task status will be tracked via polling (see pollTaskStatus below)
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error');
+      buttons.forEach(b => {
+        b.disabled = false;
+        b.querySelector('.relative').innerHTML = `
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
+          </svg>
+          Update`;
+      });
+    }
+  }
+
+  // ── Poll task statuses ────────────────────────────────────────────
+  const BTN_UPDATE_HTML = `
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
+    </svg>
+    Update`;
+  const BTN_RUNNING_HTML = '<span class="spinner"></span> Running…';
+
+  async function pollTaskStatus() {
+    try {
+      const res = await fetch('/api/task-status', { headers: AUTH_HEADERS });
+      if (!res.ok) return;
+      const statuses = await res.json();
+
+      let errorCount = 0;
+      const errorFlags = [];
+
+      Object.keys(FLAGS).forEach(flag => {
+        // Single-char flags use "-b" key, multi-char use raw key "a_big"
+        const key = flag.length === 1 ? '-' + flag : flag;
+        const taskState = statuses[key] || 'idle';
+        const isRunning = taskState === 'running';
+        const isErrorSize = taskState === 'ERROR_SIZE';
+
+        if (isErrorSize) {
+          errorCount++;
+          const flagDisplay = flag.length === 1 ? `-${flag}` : flag;
+          errorFlags.push(flagDisplay);
+        }
+
+        // ── Button state ──────────────────────────────────────────
+        const btn = document.getElementById('btn-' + flag);
+        const btnM = document.getElementById('btn-m-' + flag);
+        [btn, btnM].filter(Boolean).forEach(b => {
+          if (isErrorSize) {
+            b.disabled = false;
+            const inner = b.querySelector('.relative') || b.querySelector('span');
+            if (inner) inner.innerHTML = '<span class="badge-error" title="File size exceeds safety limit (×5). Access blocked."><span class="err-icon">⚠️</span> SIZE ERROR</span>';
+          } else if (isRunning) {
+            b.disabled = true;
+            const inner = b.querySelector('.relative') || b.querySelector('span');
+            if (inner) inner.innerHTML = BTN_RUNNING_HTML;
+          } else {
+            b.disabled = false;
+            const inner = b.querySelector('.relative') || b.querySelector('span');
+            if (inner) inner.innerHTML = BTN_UPDATE_HTML;
+          }
+        });
+
+        // ── Row-level / Card-level error highlight ────────────────
+        const row = document.querySelector(`tr[data-flag="${flag}"]`);
+        if (row) {
+          if (isErrorSize) {
+            row.classList.add('row-error');
+            row.classList.remove('row-hover');
+          } else {
+            row.classList.remove('row-error');
+            if (!row.classList.contains('row-hover')) row.classList.add('row-hover');
+          }
+        }
+        const card = document.querySelector(`div[data-flag-card="${flag}"]`);
+        if (card) {
+          if (isErrorSize) {
+            card.classList.add('card-error');
+          } else {
+            card.classList.remove('card-error');
+          }
+        }
+      });
+
+      // ── Stats bar error counter ────────────────────────────────
+      const statEl = document.getElementById('statErrors');
+      const statBlock = document.getElementById('statErrorsBlock');
+      if (statEl) statEl.textContent = errorCount;
+      if (statBlock) {
+        statBlock.style.opacity = errorCount > 0 ? '1' : '0.4';
+      }
+
+      // ── Error banner ───────────────────────────────────────────
+      const banner = document.getElementById('errorBanner');
+      const bannerDetail = document.getElementById('errorBannerDetail');
+      if (banner) {
+        if (errorCount > 0) {
+          banner.classList.add('visible');
+          if (bannerDetail) {
+            bannerDetail.textContent = `Blocked flags: ${errorFlags.join(', ')}. Files exceed the safety size limit (×5) and are blocked from download.`;
+          }
+        } else {
+          banner.classList.remove('visible');
+        }
+      }
+    } catch (e) {
+      // Silently ignore polling errors
+    }
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────
+  refreshStatus();
+  pollTaskStatus();
+  // Auto-refresh data every 60s, poll task statuses every 5s
+  setInterval(refreshStatus, 60000);
+  setInterval(pollTaskStatus, 5000);
+</script>
+</body>
+</html>"""
+    return html_template.replace("AUTH_TOKEN_PLACEHOLDER", auth_token)
