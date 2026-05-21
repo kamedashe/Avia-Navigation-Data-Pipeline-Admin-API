@@ -7,6 +7,10 @@
 
 A robust, enterprise-grade aviation data processing engine. This system automates the acquisition, parsing, and optimization of FAA aeronautical data, providing a high-performance API and a modern administrative dashboard.
 
+<p align="center">
+  <img src="assets/dashboard.png" alt="Avia Navigation Admin Dashboard" width="100%" />
+</p>
+
 ---
 
 ## ✨ Key Features
