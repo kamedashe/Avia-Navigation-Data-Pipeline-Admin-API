@@ -8,7 +8,7 @@ User=mb
 Group=mb
 WorkingDirectory=/home/mb/remote_server/PycharmProjects/aviation-navigation-server
 Environment="PATH=/home/mb/remote_server/PycharmProjects/aviation-navigation-server/.venv/bin"
-ExecStart=/home/mb/remote_server/PycharmProjects/aviation-navigation-server/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+ExecStart=/home/mb/remote_server/PycharmProjects/aviation-navigation-server/.venv/bin/gunicorn --chdir django_app -w 4 -k gthread --threads 4 --timeout 600 --bind 127.0.0.1:8001 avia_nav.wsgi:application
 Restart=on-failure
 RestartSec=5s
 

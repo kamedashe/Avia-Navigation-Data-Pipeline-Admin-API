@@ -1,7 +1,7 @@
 # ✈️ Avia Navigation Data Pipeline & Admin API
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-05998b.svg)](https://fastapi.tiangolo.com/)
+[![Django](https://img.shields.io/badge/Django-5.x-092e20.svg)](https://www.djangoproject.com/)
 [![Docker](https://img.shields.io/badge/Docker-enabled-2496ed.svg)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -11,20 +11,10 @@ A robust, enterprise-grade aviation data processing engine. This system automate
   <img src="assets/dashboard.png" alt="Avia Navigation Admin Dashboard" width="100%" />
 </p>
 
----
-
-## 🔀 Backend migration in progress
-
-This repository currently ships **two** implementations of the same API:
-
-- **`app/`** — the original FastAPI service (documented below). This is what's
-  currently deployed in production.
-- **[`django_app/`](django_app/README.md)** — a pure-Django port with identical
-  public routes (mobile clients need no changes) and real server-side admin
-  token verification. See its own README for setup and deployment.
-
-Once `django_app/` is verified in production, `app/` will be removed and this
-README updated accordingly.
+> The backend lives in **[`django_app/`](django_app/README.md)** (Django). The
+> data pipeline lives in **`web_scraper/`** and is invoked by the server as a
+> subprocess. See `django_app/README.md` for the full API route table and
+> deployment details.
 
 ---
 
@@ -50,7 +40,7 @@ README updated accordingly.
 ## 🚀 Technical Stack
 
 - **Core**: Python 3.10+
-- **API**: FastAPI (Asynchronous framework)
+- **API**: Django (WSGI, served with Gunicorn)
 - **Data**: Pandas, GeoPandas (Spatial data optimization)
 - **UI**: Tailwind CSS, Glassmorphism design system
 - **DevOps**: Docker, Docker Compose
@@ -69,8 +59,8 @@ cd aviation-navigation-server
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install the server (Django) + scraper dependencies
+pip install -r django_app/requirements.txt
 ```
 
 ### 2. Configuration
@@ -82,10 +72,14 @@ AUTH_TOKEN=your_secure_admin_token
 ```
 
 ### 3. Execution
-**Run the API:**
+**Run the API (Django dev server):**
 ```bash
-fastapi dev app/main.py
+cd django_app
+python manage.py runserver 0.0.0.0:5045
 ```
+No `migrate` is needed — the API touches no database. See
+[`django_app/README.md`](django_app/README.md) for the production Gunicorn command.
+
 **Run the Scraper manually:**
 ```bash
 python3 -m web_scraper.script -b # Update Base Airports
@@ -98,39 +92,37 @@ python3 -m web_scraper.script -b # Update Base Airports
 The project is fully containerized for seamless server deployment.
 
 ```bash
-# Build and start the infrastructure
-docker compose up -d --build
+# Build and start the infrastructure (from the project root)
+docker compose -f django_app/compose.yaml up -d --build
 
 # View logs
-docker compose logs -f
+docker compose -f django_app/compose.yaml logs -f
 ```
 
-The production API will be available at `http://your-server-ip:5046`.
+The production API will be available at `http://your-server-ip:5045`.
 
 ---
 
 ## 📐 Project Structure
 
 ```text
-├── app/               # FastAPI application & Routers (current production)
-│   └── routers/       # Admin Dashboard & API endpoints
-├── django_app/        # Django port of the same API (see django_app/README.md)
-├── web_scraper/       # Core scraping & processing logic (shared by both backends)
+├── django_app/        # Django backend (see django_app/README.md)
+│   ├── avia_nav/      # Project settings, urls, wsgi/asgi
+│   └── api/           # Views, services, admin dashboard
+├── web_scraper/       # Core scraping & processing logic (run as a subprocess)
 │   ├── scraper_utils.py
 │   ├── script.py      # Entry point for data processing
 │   └── zip_utils.py
 ├── data/              # Processed CSV results
 ├── downloaded_data/   # Temporary storage for archives
-└── requirements.txt
+└── requirements.txt   # Scraper dependencies (server deps in django_app/)
 ```
 
 ---
 
 ## 🛡️ Security
 
-The Admin Dashboard is intended to be protected via Bearer Token authentication. Ensure your `AUTH_TOKEN` in `.env` is a strong, unique string.
-
-> **Note:** in the current FastAPI app (`app/`) this token is sent by the dashboard but **not verified server-side**. The Django port (`django_app/`) fixes this — see its README for details.
+Admin endpoints are protected server-side via the `AUTH_TOKEN`: Bearer token on `/api/status`, `/api/task-status` and `/api/run/*`, and HTTP Basic on the `/admin` dashboard. Ensure your `AUTH_TOKEN` in `.env` is a strong, unique string. Public file-download endpoints remain open. See [`django_app/README.md`](django_app/README.md) for the full auth model.
 
 ---
 
