@@ -1,0 +1,31 @@
+name: avia-nav-server-django
+
+services:
+  app:
+    build:
+      # Build from the project root so web_scraper/ is available in the image.
+      context: ..
+      dockerfile: ./django_app/Dockerfile
+    restart: always
+    volumes:
+      - ../:/code
+      - ../data:/code/data
+      - ../processed_data:/code/processed_data
+      - ../downloaded_data:/code/downloaded_data
+    ports:
+      - "5045:5045"
+    command:
+      - gunicorn
+      - --chdir
+      - django_app
+      - -w
+      - "4"
+      - -k
+      - gthread
+      - --threads
+      - "4"
+      - --timeout
+      - "600"
+      - --bind
+      - 0.0.0.0:5045
+      - avia_nav.wsgi:application
