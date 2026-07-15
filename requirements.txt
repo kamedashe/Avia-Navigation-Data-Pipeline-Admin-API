@@ -1,18 +1,14 @@
+# Dependencies for the standalone web_scraper (data pipeline).
+# The Django web server has its own pinned set in django_app/requirements.txt
+# (which also includes these so the container can run scrapers).
 alive-progress>=3.2.0
 asyncpg>=0.30.0
 beautifulsoup4>=4.12.3
-fastapi>=0.115.4
-fastapi-cli==0.0.5
-
 geopandas==1.0.1
-gunicorn>=23.0.0
 pandas>=2.2.3
 psycopg2-binary>=2.9.1
-pydantic>=2.9.2
 Pillow>=10.0.0
 PyMuPDF>=1.24.13
 python-dotenv>=1.0.1
-python-multipart==0.0.17
 requests>=2.32.3
 tqdm>=4.67.0
-uvicorn>=0.32.0
