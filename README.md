@@ -13,6 +13,21 @@ A robust, enterprise-grade aviation data processing engine. This system automate
 
 ---
 
+## 🔀 Backend migration in progress
+
+This repository currently ships **two** implementations of the same API:
+
+- **`app/`** — the original FastAPI service (documented below). This is what's
+  currently deployed in production.
+- **[`django_app/`](django_app/README.md)** — a pure-Django port with identical
+  public routes (mobile clients need no changes) and real server-side admin
+  token verification. See its own README for setup and deployment.
+
+Once `django_app/` is verified in production, `app/` will be removed and this
+README updated accordingly.
+
+---
+
 ## ✨ Key Features
 
 ### 🛠️ Intelligent Data Scraper
@@ -97,9 +112,10 @@ The production API will be available at `http://your-server-ip:5046`.
 ## 📐 Project Structure
 
 ```text
-├── app/               # FastAPI application & Routers
+├── app/               # FastAPI application & Routers (current production)
 │   └── routers/       # Admin Dashboard & API endpoints
-├── web_scraper/       # Core scraping & processing logic
+├── django_app/        # Django port of the same API (see django_app/README.md)
+├── web_scraper/       # Core scraping & processing logic (shared by both backends)
 │   ├── scraper_utils.py
 │   ├── script.py      # Entry point for data processing
 │   └── zip_utils.py
@@ -112,7 +128,9 @@ The production API will be available at `http://your-server-ip:5046`.
 
 ## 🛡️ Security
 
-The Admin Dashboard is protected via Bearer Token authentication. Ensure your `AUTH_TOKEN` in `.env` is a strong, unique string.
+The Admin Dashboard is intended to be protected via Bearer Token authentication. Ensure your `AUTH_TOKEN` in `.env` is a strong, unique string.
+
+> **Note:** in the current FastAPI app (`app/`) this token is sent by the dashboard but **not verified server-side**. The Django port (`django_app/`) fixes this — see its README for details.
 
 ---
 
