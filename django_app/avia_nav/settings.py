@@ -68,11 +68,17 @@ TEMPLATES = [
 WSGI_APPLICATION = "avia_nav.wsgi.application"
 ASGI_APPLICATION = "avia_nav.asgi.application"
 
-# Unused by any API endpoint — present only for Django's default connection.
+# PostgreSQL. Reuses the PG* variables the scraper/.env already define, with
+# defaults matching the bundled db service in django_app/compose.yaml.
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": DJANGO_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "HOST": os.getenv("PGHOST") or "localhost",
+        "PORT": os.getenv("PGPORT") or "5432",
+        "NAME": os.getenv("PGDATABASE") or "postgres",
+        "USER": os.getenv("PGUSER") or "admin",
+        "PASSWORD": os.getenv("PGPASSWORD") or "test_password",
+        "CONN_MAX_AGE": 60,
     }
 }
 

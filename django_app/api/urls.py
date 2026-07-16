@@ -7,7 +7,15 @@ since Django resolves patterns top-to-bottom.
 
 from django.urls import path
 
-from api.views import admin_dashboard, changes, diagrams, files, maps, root
+from api.views import (
+    admin_dashboard,
+    airports,
+    changes,
+    diagrams,
+    files,
+    maps,
+    root,
+)
 
 urlpatterns = [
     # Root test endpoint
@@ -41,6 +49,10 @@ urlpatterns = [
     path("api/v1/a-small/download", diagrams.download_a_small_archive),
     path("api/v1/a-small", diagrams.list_a_small_codes),
     path("api/v1/a-small/<str:code>", diagrams.get_a_small_sketch),
+
+    # ── Airports from Postgres (ORM-backed; additive to /api/b/) ─────
+    path("api/v1/airports", airports.list_airports),
+    path("api/v1/airports/<str:identifier>", airports.get_airport),
 
     # ── Offline maps (.mbtiles + JSON metadata) ──────────────────────
     path("api/v1/maps", maps.list_mbtiles),

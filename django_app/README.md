@@ -36,6 +36,7 @@ as a subprocess (`python -m web_scraper.script -<flag>`); it was not rewritten.
 | GET | `/api/v1/a-big`, `/api/v1/a-big/{state}`, `/api/v1/a-big/{state}/{code}`, `/api/v1/a-big/download` | public |
 | GET | `/api/v1/a-small`, `/api/v1/a-small/{code}`, `/api/v1/a-small/download` | public |
 | GET | `/api/v1/maps`, `/api/v1/maps/{file}.mbtiles`, `/api/v1/maps/info`, `/api/v1/maps/info/{file}.json` | public |
+| GET | `/api/v1/airports`, `/api/v1/airports/{identifier}` | public (Postgres/ORM) |
 | GET | `/admin` | **Basic** (password = `AUTH_TOKEN`) |
 | GET | `/api/status`, `/api/task-status` | **Bearer** `AUTH_TOKEN` |
 | POST | `/api/run/{flag}` | **Bearer** `AUTH_TOKEN` |
@@ -51,11 +52,18 @@ server-side. This port enforces it:
 
 ## Configuration
 
-Uses the same `.env` in the project root as the FastAPI app / scraper:
+Uses the same `.env` in the project root as the scraper:
 
 ```env
 AUTH_TOKEN=your_secure_admin_token
 RSYNC_SOURCE=mb@127.0.0.1:/home/mb/faa_vfr
+
+# PostgreSQL (blank falls back to the compose defaults below)
+PGHOST=localhost
+PGPORT=5432
+PGUSER=admin
+PGPASSWORD=test_password
+PGDATABASE=postgres
 
 # Optional Django knobs
 DJANGO_SECRET_KEY=change-me
@@ -68,11 +76,29 @@ DJANGO_ALLOWED_HOSTS=*
 ```bash
 cd django_app
 pip install -r requirements.txt
+
+# Start PostgreSQL (or point PG* at your own instance)
+docker compose -f compose.yaml up -d db
+
+python manage.py migrate
+python manage.py import_airports        # loads data/b.csv.gz into Postgres
 python manage.py runserver 0.0.0.0:5045
 ```
 
-No `migrate` is required — the app touches no database (a SQLite default is
-configured only so Django's own machinery has a connection).
+### Data import
+
+`import_airports` unpacks the scraper's denormalized `data/b.csv.gz` (one row
+per airport with up to 11 inline runway groups) into `Airport` + `Runway`
+rows. It is idempotent — each run replaces the table contents, mirroring how
+the scraper regenerates the CSV each cycle.
+
+```bash
+python manage.py import_airports --dry-run          # parse & report, no writes
+python manage.py import_airports --path other.csv.gz
+```
+
+The file-download endpoints (`/api/b/` etc.) still serve the CSVs straight
+from disk and do **not** depend on the database.
 
 ## Run — production (gunicorn)
 
