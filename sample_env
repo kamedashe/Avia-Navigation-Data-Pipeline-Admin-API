@@ -1,3 +1,7 @@
+# PostgreSQL — used by both the Django API and the scraper.
+# Defaults (when left blank) match the bundled db service in
+# django_app/compose.yaml: admin / test_password / postgres on localhost:5432.
+# Inside docker compose the app reaches the database at host "db".
 PGHOST=
 PGUSER=
 PGPORT=
