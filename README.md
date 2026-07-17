@@ -135,6 +135,13 @@ pgAdmin is opt-in via the `tools` profile (then browse to `localhost:8080`):
 docker compose -f django_app/compose.yaml --profile tools up -d pgadmin
 ```
 
+### Cloud Deployment (AWS)
+
+Also runs as a single EC2 instance with the same Compose stack — no ECS/RDS,
+same ops model as above, just provisioned via the AWS CLI (security group,
+key pair, Elastic IP, cloud-init Docker bootstrap). Full runbook in
+[`django_app/README.md`](django_app/README.md#deploying-to-aws-ec2).
+
 ---
 
 ## 📐 Project Structure
@@ -147,6 +154,7 @@ docker compose -f django_app/compose.yaml --profile tools up -d pgadmin
 │       ├── models.py     # Airport / Runway
 │       ├── migrations/
 │       └── management/   # import_airports command
+├── infra/aws/         # EC2 cloud-init bootstrap (Docker + swap)
 ├── web_scraper/       # Core scraping & processing logic (run as a subprocess)
 │   ├── scraper_utils.py
 │   ├── script.py      # Entry point for data processing
