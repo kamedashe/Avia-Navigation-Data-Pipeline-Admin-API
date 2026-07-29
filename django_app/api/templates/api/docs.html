@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="uk">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Avia Navigation API — Reference</title>
+<title>Avia Navigation API — Довідник</title>
 <style>
   :root {
     --ground:      #f4f6f8;
@@ -142,27 +142,28 @@
 <div class="wrap">
 
   <header>
-    <div class="eyebrow">avia navigation · api reference</div>
-    <h1>Aviation data API</h1>
+    <div class="eyebrow">avia navigation · довідник api</div>
+    <h1>API авіаційних даних</h1>
     <p class="lede">
-      FAA aeronautical data — airports, runways, navigation fixes, airspace and
-      offline map tiles. Every endpoint below is live on this server; the
-      examples are real links you can open in a browser.
+      Аеронавігаційні дані FAA — аеропорти, злітно-посадкові смуги, навігаційні
+      точки, повітряний простір та офлайн-карти. Усі ендпоінти нижче працюють на
+      цьому сервері; приклади — живі посилання, які можна відкрити в браузері.
     </p>
   </header>
 
   <div class="stats">
-    <div class="stat"><b>{{ airport_count }}</b><span>airports in the database</span></div>
-    <div class="stat"><b>{{ runway_count }}</b><span>runways</span></div>
-    <div class="stat"><b>{{ dataset_scope }}</b><span>coverage</span></div>
-    <div class="stat"><b>JSON</b><span>response format</span></div>
+    <div class="stat"><b>{{ airport_count }}</b><span>аеропортів у базі</span></div>
+    <div class="stat"><b>{{ runway_count }}</b><span>злітно-посадкових смуг</span></div>
+    <div class="stat"><b>{{ dataset_scope }}</b><span>покриття</span></div>
+    <div class="stat"><b>JSON</b><span>формат відповіді</span></div>
   </div>
 
   <section>
-    <h2>Airports</h2>
+    <h2>Аеропорти</h2>
     <p class="group-note">
-      Served from PostgreSQL. Airports are keyed by their <strong>FAA identifier</strong>
-      (<code>LAX</code>, <code>JFK</code>, <code>0J0</code>) — not the four-letter ICAO code.
+      Дані з PostgreSQL. Аеропорти ідентифікуються за <strong>кодом FAA</strong>
+      (<code>LAX</code>, <code>JFK</code>, <code>0J0</code>) — не за
+      чотирилітерним кодом ICAO.
     </p>
 
     <div class="ep">
@@ -170,16 +171,16 @@
         <span class="verb">GET</span>
         <span class="path">/api/v1/airports</span>
       </div>
-      <p class="desc">Paginated list of airports, with optional filters.</p>
+      <p class="desc">Список аеропортів із пагінацією та необовʼязковими фільтрами.</p>
       <div class="params-wrap">
         <table>
-          <thead><tr><th>Parameter</th><th>Meaning</th></tr></thead>
+          <thead><tr><th>Параметр</th><th>Опис</th></tr></thead>
           <tbody>
-            <tr><td><code>state</code></td><td>Two-letter state code, e.g. <code>CA</code></td></tr>
-            <tr><td><code>country</code></td><td>Two-letter country code, e.g. <code>US</code></td></tr>
-            <tr><td><code>city</code></td><td>Partial city name, case-insensitive</td></tr>
-            <tr><td><code>q</code></td><td>Identifier prefix, e.g. <code>0J</code></td></tr>
-            <tr><td><code>page</code>, <code>per_page</code></td><td>Pagination; <code>per_page</code> caps at 500</td></tr>
+            <tr><td><code>state</code></td><td>Дволітерний код штату, напр. <code>CA</code></td></tr>
+            <tr><td><code>country</code></td><td>Дволітерний код країни, напр. <code>US</code></td></tr>
+            <tr><td><code>city</code></td><td>Частина назви міста, без урахування регістру</td></tr>
+            <tr><td><code>q</code></td><td>Початок ідентифікатора, напр. <code>0J</code></td></tr>
+            <tr><td><code>page</code>, <code>per_page</code></td><td>Пагінація; <code>per_page</code> — максимум 500</td></tr>
           </tbody>
         </table>
       </div>
@@ -191,7 +192,7 @@
         <span class="verb">GET</span>
         <span class="path">/api/v1/airports/&lt;identifier&gt;</span>
       </div>
-      <p class="desc">One airport with all of its runways. Identifier is case-insensitive.</p>
+      <p class="desc">Один аеропорт з усіма його смугами. Регістр коду не має значення.</p>
       <a class="try" href="/api/v1/airports/LAX" target="_blank" rel="noopener">/api/v1/airports/LAX</a>
     </div>
 
@@ -201,29 +202,29 @@
         <span class="path">/api/v1/airports/near</span>
       </div>
       <p class="desc">
-        Airports around a point, nearest first. Each result carries a
-        <code>distance_km</code> field.
+        Аеропорти навколо заданої точки, найближчі першими. Кожен результат
+        містить поле <code>distance_km</code>.
       </p>
       <div class="params-wrap">
         <table>
-          <thead><tr><th>Parameter</th><th>Meaning</th></tr></thead>
+          <thead><tr><th>Параметр</th><th>Опис</th></tr></thead>
           <tbody>
-            <tr><td><code>lat</code>, <code>lon</code></td><td><strong>Required.</strong> Decimal degrees</td></tr>
-            <tr><td><code>radius_km</code></td><td>Search radius, default 50, capped at 500</td></tr>
-            <tr><td><code>limit</code></td><td>Max results, default 20, capped at 200</td></tr>
+            <tr><td><code>lat</code>, <code>lon</code></td><td><strong>Обовʼязково.</strong> Десяткові градуси</td></tr>
+            <tr><td><code>radius_km</code></td><td>Радіус пошуку, за замовчуванням 50, максимум 500</td></tr>
+            <tr><td><code>limit</code></td><td>Максимум результатів, за замовчуванням 20, максимум 200</td></tr>
           </tbody>
         </table>
       </div>
-      <a class="try" href="/api/v1/airports/near?lat=40.7128&amp;lon=-74.0060&amp;radius_km=30" target="_blank" rel="noopener">/api/v1/airports/near?lat=40.7128&amp;lon=-74.0060&amp;radius_km=30 &nbsp;— around New York</a>
-      <a class="try" href="/api/v1/airports/near?lat=33.9425&amp;lon=-118.4081&amp;radius_km=25&amp;limit=10" target="_blank" rel="noopener">/api/v1/airports/near?lat=33.9425&amp;lon=-118.4081&amp;radius_km=25&amp;limit=10 &nbsp;— around LAX</a>
+      <a class="try" href="/api/v1/airports/near?lat=40.7128&amp;lon=-74.0060&amp;radius_km=30" target="_blank" rel="noopener">/api/v1/airports/near?lat=40.7128&amp;lon=-74.0060&amp;radius_km=30 &nbsp;— околиці Нью-Йорка</a>
+      <a class="try" href="/api/v1/airports/near?lat=33.9425&amp;lon=-118.4081&amp;radius_km=25&amp;limit=10" target="_blank" rel="noopener">/api/v1/airports/near?lat=33.9425&amp;lon=-118.4081&amp;radius_km=25&amp;limit=10 &nbsp;— околиці LAX</a>
     </div>
   </section>
 
   <section>
-    <h2>Data files</h2>
+    <h2>Файли даних</h2>
     <p class="group-note">
-      Bulk datasets as gzip-compressed CSV, regenerated by the scraper each FAA
-      cycle. These are file downloads, not JSON.
+      Повні набори даних у форматі CSV (gzip), які оновлюються кожного
+      28-денного циклу FAA. Це завантаження файлів, а не JSON.
     </p>
     <div class="ep">
       <div class="ep-head">
@@ -231,81 +232,82 @@
         <span class="path">/api/&lt;flag&gt;/</span>
       </div>
       <p class="desc">
-        One dataset per flag: <code>b</code> base airports, <code>c</code> class airspace,
-        <code>d</code> obstacles, <code>e</code> special-use airspace, <code>f</code> fixes,
-        <code>g</code> stadiums, <code>n</code> navaids, <code>r</code> runway ends,
-        <code>t</code> TFR.
+        Один набір даних на прапорець: <code>b</code> — базові аеропорти,
+        <code>c</code> — повітряний простір класів, <code>d</code> — перешкоди,
+        <code>e</code> — простір спеціального використання, <code>f</code> —
+        навігаційні точки, <code>g</code> — стадіони, <code>n</code> —
+        радіонавігаційні засоби, <code>r</code> — торці смуг, <code>t</code> — TFR.
       </p>
-      <a class="try" href="/api/b/" target="_blank" rel="noopener">/api/b/ &nbsp;— base airports (.csv.gz)</a>
+      <a class="try" href="/api/b/" target="_blank" rel="noopener">/api/b/ &nbsp;— базові аеропорти (.csv.gz)</a>
     </div>
     <div class="ep">
       <div class="ep-head">
         <span class="verb">GET</span>
         <span class="path">/api/changes/</span>
       </div>
-      <p class="desc">Freshness metadata: when each dataset was last updated and how big it is. Clients use this to decide whether to re-download.</p>
+      <p class="desc">Метадані свіжості: коли кожен набір даних востаннє оновлювався і скільки він важить. Клієнти за цим вирішують, чи потрібне повторне завантаження.</p>
       <a class="try" href="/api/changes/" target="_blank" rel="noopener">/api/changes/</a>
     </div>
   </section>
 
   <section>
-    <h2>Charts &amp; maps</h2>
+    <h2>Схеми та карти</h2>
     <p class="group-note">
-      Airport diagrams and offline map tiles. These are synced from a separate
-      server, so on this instance the listings may be empty.
+      Схеми аеропортів та офлайн-тайли карт. Вони синхронізуються з окремого
+      сервера, тому на цьому інстансі списки можуть бути порожніми.
     </p>
     <div class="ep">
       <div class="ep-head"><span class="verb">GET</span><span class="path">/api/v1/a-big</span></div>
-      <p class="desc">States that have full FAA airport diagrams; then <code>/api/v1/a-big/&lt;state&gt;</code> for the codes, and <code>/api/v1/a-big/&lt;state&gt;/&lt;code&gt;</code> for the image.</p>
+      <p class="desc">Штати, для яких є повні схеми аеропортів FAA; далі <code>/api/v1/a-big/&lt;state&gt;</code> — перелік кодів, <code>/api/v1/a-big/&lt;state&gt;/&lt;code&gt;</code> — саме зображення.</p>
       <a class="try" href="/api/v1/a-big" target="_blank" rel="noopener">/api/v1/a-big</a>
     </div>
     <div class="ep">
       <div class="ep-head"><span class="verb">GET</span><span class="path">/api/v1/maps</span></div>
-      <p class="desc">Available offline <code>.mbtiles</code> map packs.</p>
+      <p class="desc">Доступні офлайн-пакети карт <code>.mbtiles</code>.</p>
       <a class="try" href="/api/v1/maps" target="_blank" rel="noopener">/api/v1/maps</a>
     </div>
   </section>
 
   <section>
-    <h2>Administration</h2>
+    <h2>Адміністрування</h2>
     <div class="ep">
       <div class="ep-head">
         <span class="verb">GET</span>
         <span class="path">/admin</span>
-        <span class="chip-lock">token required</span>
+        <span class="chip-lock">потрібен токен</span>
       </div>
       <p class="desc">
-        Operator dashboard: dataset freshness, file sizes and manual refresh
-        triggers. Protected — browsers are challenged for credentials, and the
-        JSON endpoints behind it require a bearer token.
+        Панель оператора: свіжість наборів даних, розміри файлів та ручний
+        запуск оновлень. Захищено — браузер запитує облікові дані, а
+        JSON-ендпоінти за панеллю вимагають bearer-токен.
       </p>
     </div>
   </section>
 
   <section>
-    <h2>Worth knowing</h2>
+    <h2>Варто знати</h2>
     <ul class="notes">
       <li>
-        <b>Identifiers are FAA codes, not ICAO</b>
-        <span><code>LAX</code> resolves; <code>KLAX</code> does not. Same for
-        <code>JFK</code> vs <code>KJFK</code>.</span>
+        <b>Ідентифікатори — коди FAA, а не ICAO</b>
+        <span><code>LAX</code> працює; <code>KLAX</code> — ні. Те саме з
+        <code>JFK</code> проти <code>KJFK</code>.</span>
       </li>
       <li>
-        <b>Coverage follows the FAA source</b>
-        <span>{{ coverage_note }} The dataset is the FAA 28-day subscription, so
-        it is US-centric by construction.</span>
+        <b>Покриття відповідає джерелу FAA</b>
+        <span>{{ coverage_note }} Джерело — 28-денна підписка FAA, тому дані
+        за побудовою зосереджені на США.</span>
       </li>
       <li>
-        <b>Read-only over plain HTTP</b>
-        <span>Every public endpoint is a GET and needs no key. This instance has
-        no TLS certificate yet, so treat it as a staging environment rather than
-        a production integration target.</span>
+        <b>Лише читання, звичайний HTTP</b>
+        <span>Усі публічні ендпоінти — GET і не потребують ключа. На цьому
+        інстансі поки немає TLS-сертифіката, тож розглядайте його як тестове
+        середовище, а не як продакшн-ціль для інтеграції.</span>
       </li>
     </ul>
   </section>
 
   <footer>
-    Data source: FAA National Airspace System Resource (NASR) 28-day subscription.
+    Джерело даних: FAA National Airspace System Resource (NASR), 28-денна підписка.
   </footer>
 
 </div>
