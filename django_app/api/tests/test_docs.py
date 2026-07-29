@@ -42,6 +42,26 @@ class DocsPageTests(TestCase):
             with self.subTest(path=path):
                 self.assertIn(path, body)
 
+    def test_offers_a_search_box(self):
+        """Pavel's actual question: "is there a search on the site?"."""
+        body = self.client.get("/api/docs/").content.decode()
+        self.assertIn('id="searchInput"', body)
+        self.assertIn('id="results"', body)
+
+    def test_states_the_us_only_coverage_next_to_the_search(self):
+        """Searching a European airport must not read as a broken API."""
+        body = self.client.get("/api/docs/").content.decode()
+        self.assertIn("лише США", body)
+
+    def test_search_backs_onto_endpoints_that_work(self):
+        """The two queries the search widget fires must both answer."""
+        for url in [
+            "/api/v1/airports?per_page=8&q=LAX",
+            "/api/v1/airports?per_page=8&city=Chicago",
+        ]:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 200)
+
     def test_warns_that_identifiers_are_faa_not_icao(self):
         """The single most likely thing to trip up a first-time user."""
         body = self.client.get("/api/docs/").content.decode()

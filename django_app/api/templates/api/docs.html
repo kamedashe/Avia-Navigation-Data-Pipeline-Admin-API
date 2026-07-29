@@ -127,6 +127,56 @@
   .try:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .try::before { content: "▸"; font-size: .8em; }
 
+  /* ---------- search ---------- */
+  .search { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .search input {
+    flex: 1 1 16rem; min-width: 0;
+    font-family: var(--sans); font-size: 1rem;
+    padding: .6rem .8rem;
+    color: var(--ink); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  .search input:focus-visible,
+  .search button:focus-visible,
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .search button {
+    font-family: var(--sans); font-size: .95rem; font-weight: 600;
+    padding: .6rem 1.1rem; cursor: pointer;
+    color: var(--surface); background: var(--accent);
+    border: 1px solid var(--accent); border-radius: 8px;
+  }
+  .chips { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .chip {
+    font-family: var(--mono); font-size: .78rem; cursor: pointer;
+    padding: .3rem .6rem; border-radius: 999px;
+    color: var(--accent); background: var(--accent-soft);
+    border: 1px solid transparent;
+  }
+  .chip:hover { border-color: var(--accent); }
+
+  .results { display: flex; flex-direction: column; gap: .5rem; }
+  .hit {
+    display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; padding: .65rem .85rem;
+  }
+  .hit-code {
+    font-family: var(--mono); font-size: 1.05rem; font-weight: 600;
+    letter-spacing: .04em;
+  }
+  .hit-place { flex: 1 1 10rem; font-size: .92rem; }
+  .hit-geo {
+    font-family: var(--mono); font-size: .74rem; color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .hit a { font-size: .78rem; white-space: nowrap; }
+  .msg {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
+    padding: .7rem .9rem; font-size: .9rem; color: var(--ink-soft);
+  }
+  .msg b { color: var(--ink); }
+
   .notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .7rem; }
   .notes li {
     background: var(--surface); border: 1px solid var(--line);
@@ -157,6 +207,33 @@
     <div class="stat"><b>{{ dataset_scope }}</b><span>покриття</span></div>
     <div class="stat"><b>JSON</b><span>формат відповіді</span></div>
   </div>
+
+  <section class="search-block">
+    <h2>Пошук по базі</h2>
+    <p class="group-note">
+      Введіть код FAA або назву міста — і подивіться, що є в базі. Це та сама
+      база, з якою працюють ендпоінти нижче.
+      <strong>Дані охоплюють лише США</strong> (джерело — FAA), тож європейських
+      аеропортів тут немає.
+    </p>
+
+    <form class="search" id="searchForm" role="search">
+      <input id="searchInput" type="search" autocomplete="off" spellcheck="false"
+             placeholder="напр. LAX, JFK або Chicago"
+             aria-label="Пошук аеропорту за кодом або містом"/>
+      <button type="submit">Шукати</button>
+    </form>
+
+    <div class="chips" aria-label="Приклади">
+      <button type="button" class="chip" data-q="LAX">LAX</button>
+      <button type="button" class="chip" data-q="JFK">JFK</button>
+      <button type="button" class="chip" data-q="ORD">ORD</button>
+      <button type="button" class="chip" data-q="Chicago">Chicago</button>
+      <button type="button" class="chip" data-q="Anchorage">Anchorage</button>
+    </div>
+
+    <div id="results" class="results" aria-live="polite"></div>
+  </section>
 
   <section>
     <h2>Аеропорти</h2>
@@ -311,5 +388,82 @@
   </footer>
 
 </div>
+
+<script>
+(function () {
+  var form    = document.getElementById("searchForm");
+  var input   = document.getElementById("searchInput");
+  var results = document.getElementById("results");
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function note(html) {
+    results.innerHTML = '<div class="msg">' + html + "</div>";
+  }
+
+  function render(list, term) {
+    if (!list.length) {
+      note(
+        "За запитом <b>" + esc(term) + "</b> нічого не знайдено. " +
+        "База містить лише аеропорти США (джерело — FAA), тому європейських, " +
+        "зокрема українських, аеропортів у ній немає. " +
+        'Спробуйте <button type="button" class="chip" data-q="LAX">LAX</button> ' +
+        'або <button type="button" class="chip" data-q="Chicago">Chicago</button>.'
+      );
+      return;
+    }
+    results.innerHTML = list.map(function (a) {
+      var place = [a.city, a.state].filter(Boolean).join(", ");
+      return '<div class="hit">' +
+        '<span class="hit-code">' + esc(a.identifier) + "</span>" +
+        '<span class="hit-place">' + esc(place) + "</span>" +
+        '<span class="hit-geo">' + Number(a.lat).toFixed(3) + ", " + Number(a.lon).toFixed(3) + "</span>" +
+        '<a href="/api/v1/airports/' + encodeURIComponent(a.identifier) + '" target="_blank" rel="noopener">деталі →</a>' +
+        "</div>";
+    }).join("");
+  }
+
+  function search(term) {
+    term = (term || "").trim();
+    if (!term) { results.innerHTML = ""; return; }
+    note("Шукаю…");
+
+    var byCode = fetch("/api/v1/airports?per_page=8&q=" + encodeURIComponent(term));
+    var byCity = fetch("/api/v1/airports?per_page=8&city=" + encodeURIComponent(term));
+
+    Promise.all([byCode, byCity])
+      .then(function (rs) { return Promise.all(rs.map(function (r) { return r.json(); })); })
+      .then(function (payloads) {
+        var seen = {}, merged = [];
+        payloads.forEach(function (p) {
+          (p.airports || []).forEach(function (a) {
+            if (!seen[a.identifier]) { seen[a.identifier] = 1; merged.push(a); }
+          });
+        });
+        render(merged.slice(0, 12), term);
+      })
+      .catch(function () {
+        note("Не вдалося виконати запит. Спробуйте ще раз за мить.");
+      });
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    search(input.value);
+  });
+
+  // Example chips — both the static ones and any rendered into an empty state.
+  document.addEventListener("click", function (e) {
+    var chip = e.target.closest(".chip");
+    if (!chip) return;
+    input.value = chip.dataset.q;
+    search(chip.dataset.q);
+  });
+})();
+</script>
 </body>
 </html>
