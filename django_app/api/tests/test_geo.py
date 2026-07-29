@@ -32,7 +32,8 @@ class RadiusSearchTests(TestCase):
         make_airport("HERE", REF_LAT, REF_LON)                 # 0 km
         make_airport("TEN", REF_LAT + 0.09, REF_LON)           # ~10 km
         make_airport("FIFTY", REF_LAT + 0.45, REF_LON)         # ~50 km
-        make_airport("FARAWAY", REF_LAT + 5.0, REF_LON)        # ~557 km
+        # ~334 km — far, but still inside the 500 km cap the endpoint enforces.
+        make_airport("FARAWAY", REF_LAT + 3.0, REF_LON)
 
     def _near(self, **params):
         params.setdefault("lat", REF_LAT)
@@ -66,11 +67,11 @@ class RadiusSearchTests(TestCase):
             "FARAWAY", [a["identifier"] for a in self._near(radius_km=100).json()["airports"]]
         )
         self.assertIn(
-            "FARAWAY", [a["identifier"] for a in self._near(radius_km=600).json()["airports"]]
+            "FARAWAY", [a["identifier"] for a in self._near(radius_km=400).json()["airports"]]
         )
 
     def test_limit_truncates_results_but_total_still_reported(self):
-        body = self._near(radius_km=600, limit=2).json()
+        body = self._near(radius_km=400, limit=2).json()
         self.assertEqual(len(body["airports"]), 2)
         self.assertEqual(body["count"], 2)
         self.assertEqual(body["total_within_radius"], 4)
