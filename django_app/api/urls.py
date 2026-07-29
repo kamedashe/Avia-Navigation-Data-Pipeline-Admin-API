@@ -12,7 +12,9 @@ from api.views import (
     airports,
     changes,
     diagrams,
+    docs,
     files,
+    geo,
     maps,
     root,
 )
@@ -20,6 +22,9 @@ from api.views import (
 urlpatterns = [
     # Root test endpoint
     path("", root.read_root),
+
+    # ── Human-readable API reference ─────────────────────────────────
+    path("api/docs/", docs.api_docs),
 
     # ── Admin dashboard + control API ────────────────────────────────
     path("admin", admin_dashboard.admin_dashboard),
@@ -51,7 +56,9 @@ urlpatterns = [
     path("api/v1/a-small/<str:code>", diagrams.get_a_small_sketch),
 
     # ── Airports from Postgres (ORM-backed; additive to /api/b/) ─────
+    # "near" must precede <identifier>, or it gets read as an airport code.
     path("api/v1/airports", airports.list_airports),
+    path("api/v1/airports/near", geo.airports_near),
     path("api/v1/airports/<str:identifier>", airports.get_airport),
 
     # ── Offline maps (.mbtiles + JSON metadata) ──────────────────────

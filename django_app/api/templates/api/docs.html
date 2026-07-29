@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Avia Navigation API — Reference</title>
+<style>
+  :root {
+    --ground:      #f4f6f8;
+    --surface:     #ffffff;
+    --surface-alt: #eef2f5;
+    --line:        #d3dbe2;
+    --ink:         #15212c;
+    --ink-soft:    #566673;
+    --ink-faint:   #8493a0;
+    --accent:      #0f6f7d;
+    --accent-soft: #dcecef;
+    --get:         #1f6f47;
+    --get-soft:    #dcefe3;
+    --lock:        #8a5a25;
+    --lock-soft:   #f2e6d5;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0d151c; --surface: #16212b; --surface-alt: #1c2935; --line: #2b3c49;
+      --ink: #e3eaef; --ink-soft: #a2b1bd; --ink-faint: #7b8b98;
+      --accent: #46acba; --accent-soft: #15343b;
+      --get: #6cc494; --get-soft: #16311f;
+      --lock: #d8ae72; --lock-soft: #33270f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0d151c; --surface: #16212b; --surface-alt: #1c2935; --line: #2b3c49;
+    --ink: #e3eaef; --ink-soft: #a2b1bd; --ink-faint: #7b8b98;
+    --accent: #46acba; --accent-soft: #15343b;
+    --get: #6cc494; --get-soft: #16311f;
+    --lock: #d8ae72; --lock-soft: #33270f;
+  }
+  :root[data-theme="light"] {
+    --ground: #f4f6f8; --surface: #ffffff; --surface-alt: #eef2f5; --line: #d3dbe2;
+    --ink: #15212c; --ink-soft: #566673; --ink-faint: #8493a0;
+    --accent: #0f6f7d; --accent-soft: #dcecef;
+    --get: #1f6f47; --get-soft: #dcefe3;
+    --lock: #8a5a25; --lock-soft: #f2e6d5;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--sans); line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 60rem; margin: 0 auto;
+    padding: clamp(1.5rem,4vw,3rem) clamp(1rem,4vw,2rem) 5rem;
+    display: flex; flex-direction: column; gap: 2.5rem;
+  }
+  a { color: var(--accent); }
+
+  header { display: flex; flex-direction: column; gap: .6rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  h1 { margin: 0; font-size: clamp(1.5rem,4vw,2.1rem); letter-spacing: -.02em; text-wrap: balance; }
+  .lede { margin: 0; max-width: 62ch; color: var(--ink-soft); }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit,minmax(9rem,1fr));
+    gap: 1px; background: var(--line); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden;
+  }
+  .stat { background: var(--surface); padding: .85rem 1rem; }
+  .stat b {
+    display: block; font-family: var(--mono); font-size: 1.4rem;
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+  }
+  .stat span { font-size: .76rem; color: var(--ink-soft); }
+
+  h2 {
+    margin: 0 0 .2rem; font-size: 1.05rem; letter-spacing: -.01em;
+    padding-bottom: .5rem; border-bottom: 1px solid var(--line);
+  }
+  section { display: flex; flex-direction: column; gap: .9rem; }
+  .group-note { margin: 0; font-size: .9rem; color: var(--ink-soft); max-width: 62ch; }
+
+  .ep {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: .95rem 1.05rem;
+    display: flex; flex-direction: column; gap: .6rem;
+  }
+  .ep-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+  .verb {
+    font-family: var(--mono); font-size: .66rem; font-weight: 700;
+    letter-spacing: .08em; padding: .2rem .45rem; border-radius: 3px;
+    background: var(--get-soft); color: var(--get);
+  }
+  .path {
+    font-family: var(--mono); font-size: .92rem; font-weight: 600;
+    word-break: break-all;
+  }
+  .chip-lock {
+    font-family: var(--mono); font-size: .62rem; letter-spacing: .08em;
+    text-transform: uppercase; padding: .18rem .45rem; border-radius: 3px;
+    background: var(--lock-soft); color: var(--lock); white-space: nowrap;
+  }
+  .desc { margin: 0; font-size: .92rem; color: var(--ink-soft); }
+
+  table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+  .params-wrap { overflow-x: auto; }
+  th, td { text-align: left; padding: .35rem .6rem .35rem 0; vertical-align: top; }
+  th { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint); font-weight: 600; }
+  td code { font-family: var(--mono); font-size: .82rem; }
+  tbody tr + tr td { border-top: 1px solid var(--line); }
+
+  .try {
+    display: inline-flex; align-items: center; gap: .45rem;
+    align-self: flex-start; text-decoration: none;
+    font-family: var(--mono); font-size: .8rem;
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid transparent; border-radius: 6px;
+    padding: .42rem .7rem; transition: border-color .15s;
+    word-break: break-all;
+  }
+  .try:hover { border-color: var(--accent); }
+  .try:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .try::before { content: "▸"; font-size: .8em; }
+
+  .notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .7rem; }
+  .notes li {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
+    padding: .7rem .9rem; font-size: .9rem;
+  }
+  .notes b { display: block; margin-bottom: .1rem; }
+  .notes span { color: var(--ink-soft); }
+  footer { border-top: 1px solid var(--line); padding-top: 1rem; font-size: .78rem; color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">avia navigation · api reference</div>
+    <h1>Aviation data API</h1>
+    <p class="lede">
+      FAA aeronautical data — airports, runways, navigation fixes, airspace and
+      offline map tiles. Every endpoint below is live on this server; the
+      examples are real links you can open in a browser.
+    </p>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b>{{ airport_count }}</b><span>airports in the database</span></div>
+    <div class="stat"><b>{{ runway_count }}</b><span>runways</span></div>
+    <div class="stat"><b>{{ dataset_scope }}</b><span>coverage</span></div>
+    <div class="stat"><b>JSON</b><span>response format</span></div>
+  </div>
+
+  <section>
+    <h2>Airports</h2>
+    <p class="group-note">
+      Served from PostgreSQL. Airports are keyed by their <strong>FAA identifier</strong>
+      (<code>LAX</code>, <code>JFK</code>, <code>0J0</code>) — not the four-letter ICAO code.
+    </p>
+
+    <div class="ep">
+      <div class="ep-head">
+        <span class="verb">GET</span>
+        <span class="path">/api/v1/airports</span>
+      </div>
+      <p class="desc">Paginated list of airports, with optional filters.</p>
+      <div class="params-wrap">
+        <table>
+          <thead><tr><th>Parameter</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>state</code></td><td>Two-letter state code, e.g. <code>CA</code></td></tr>
+            <tr><td><code>country</code></td><td>Two-letter country code, e.g. <code>US</code></td></tr>
+            <tr><td><code>city</code></td><td>Partial city name, case-insensitive</td></tr>
+            <tr><td><code>q</code></td><td>Identifier prefix, e.g. <code>0J</code></td></tr>
+            <tr><td><code>page</code>, <code>per_page</code></td><td>Pagination; <code>per_page</code> caps at 500</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <a class="try" href="/api/v1/airports?city=chicago&amp;per_page=5" target="_blank" rel="noopener">/api/v1/airports?city=chicago&amp;per_page=5</a>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head">
+        <span class="verb">GET</span>
+        <span class="path">/api/v1/airports/&lt;identifier&gt;</span>
+      </div>
+      <p class="desc">One airport with all of its runways. Identifier is case-insensitive.</p>
+      <a class="try" href="/api/v1/airports/LAX" target="_blank" rel="noopener">/api/v1/airports/LAX</a>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head">
+        <span class="verb">GET</span>
+        <span class="path">/api/v1/airports/near</span>
+      </div>
+      <p class="desc">
+        Airports around a point, nearest first. Each result carries a
+        <code>distance_km</code> field.
+      </p>
+      <div class="params-wrap">
+        <table>
+          <thead><tr><th>Parameter</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>lat</code>, <code>lon</code></td><td><strong>Required.</strong> Decimal degrees</td></tr>
+            <tr><td><code>radius_km</code></td><td>Search radius, default 50, capped at 500</td></tr>
+            <tr><td><code>limit</code></td><td>Max results, default 20, capped at 200</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <a class="try" href="/api/v1/airports/near?lat=40.7128&amp;lon=-74.0060&amp;radius_km=30" target="_blank" rel="noopener">/api/v1/airports/near?lat=40.7128&amp;lon=-74.0060&amp;radius_km=30 &nbsp;— around New York</a>
+      <a class="try" href="/api/v1/airports/near?lat=33.9425&amp;lon=-118.4081&amp;radius_km=25&amp;limit=10" target="_blank" rel="noopener">/api/v1/airports/near?lat=33.9425&amp;lon=-118.4081&amp;radius_km=25&amp;limit=10 &nbsp;— around LAX</a>
+    </div>
+  </section>
+
+  <section>
+    <h2>Data files</h2>
+    <p class="group-note">
+      Bulk datasets as gzip-compressed CSV, regenerated by the scraper each FAA
+      cycle. These are file downloads, not JSON.
+    </p>
+    <div class="ep">
+      <div class="ep-head">
+        <span class="verb">GET</span>
+        <span class="path">/api/&lt;flag&gt;/</span>
+      </div>
+      <p class="desc">
+        One dataset per flag: <code>b</code> base airports, <code>c</code> class airspace,
+        <code>d</code> obstacles, <code>e</code> special-use airspace, <code>f</code> fixes,
+        <code>g</code> stadiums, <code>n</code> navaids, <code>r</code> runway ends,
+        <code>t</code> TFR.
+      </p>
+      <a class="try" href="/api/b/" target="_blank" rel="noopener">/api/b/ &nbsp;— base airports (.csv.gz)</a>
+    </div>
+    <div class="ep">
+      <div class="ep-head">
+        <span class="verb">GET</span>
+        <span class="path">/api/changes/</span>
+      </div>
+      <p class="desc">Freshness metadata: when each dataset was last updated and how big it is. Clients use this to decide whether to re-download.</p>
+      <a class="try" href="/api/changes/" target="_blank" rel="noopener">/api/changes/</a>
+    </div>
+  </section>
+
+  <section>
+    <h2>Charts &amp; maps</h2>
+    <p class="group-note">
+      Airport diagrams and offline map tiles. These are synced from a separate
+      server, so on this instance the listings may be empty.
+    </p>
+    <div class="ep">
+      <div class="ep-head"><span class="verb">GET</span><span class="path">/api/v1/a-big</span></div>
+      <p class="desc">States that have full FAA airport diagrams; then <code>/api/v1/a-big/&lt;state&gt;</code> for the codes, and <code>/api/v1/a-big/&lt;state&gt;/&lt;code&gt;</code> for the image.</p>
+      <a class="try" href="/api/v1/a-big" target="_blank" rel="noopener">/api/v1/a-big</a>
+    </div>
+    <div class="ep">
+      <div class="ep-head"><span class="verb">GET</span><span class="path">/api/v1/maps</span></div>
+      <p class="desc">Available offline <code>.mbtiles</code> map packs.</p>
+      <a class="try" href="/api/v1/maps" target="_blank" rel="noopener">/api/v1/maps</a>
+    </div>
+  </section>
+
+  <section>
+    <h2>Administration</h2>
+    <div class="ep">
+      <div class="ep-head">
+        <span class="verb">GET</span>
+        <span class="path">/admin</span>
+        <span class="chip-lock">token required</span>
+      </div>
+      <p class="desc">
+        Operator dashboard: dataset freshness, file sizes and manual refresh
+        triggers. Protected — browsers are challenged for credentials, and the
+        JSON endpoints behind it require a bearer token.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Worth knowing</h2>
+    <ul class="notes">
+      <li>
+        <b>Identifiers are FAA codes, not ICAO</b>
+        <span><code>LAX</code> resolves; <code>KLAX</code> does not. Same for
+        <code>JFK</code> vs <code>KJFK</code>.</span>
+      </li>
+      <li>
+        <b>Coverage follows the FAA source</b>
+        <span>{{ coverage_note }} The dataset is the FAA 28-day subscription, so
+        it is US-centric by construction.</span>
+      </li>
+      <li>
+        <b>Read-only over plain HTTP</b>
+        <span>Every public endpoint is a GET and needs no key. This instance has
+        no TLS certificate yet, so treat it as a staging environment rather than
+        a production integration target.</span>
+      </li>
+    </ul>
+  </section>
+
+  <footer>
+    Data source: FAA National Airspace System Resource (NASR) 28-day subscription.
+  </footer>
+
+</div>
+</body>
+</html>
