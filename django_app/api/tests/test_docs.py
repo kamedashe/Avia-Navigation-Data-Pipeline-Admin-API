@@ -29,7 +29,7 @@ class DocsPageTests(TestCase):
     def test_counts_come_from_the_database(self):
         body = self.client.get("/api/docs/").content.decode()
         self.assertIn("3", body)  # three airports loaded above
-        self.assertIn("airports in the database", body)
+        self.assertIn("аеропортів у базі", body)
 
     def test_documents_the_endpoints_it_claims_to(self):
         body = self.client.get("/api/docs/").content.decode()

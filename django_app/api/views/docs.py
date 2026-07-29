@@ -39,17 +39,17 @@ def _dataset_summary():
             "airport_count": "—",
             "runway_count": "—",
             "dataset_scope": "—",
-            "coverage_note": "Coverage figures are unavailable right now.",
+            "coverage_note": "Дані про покриття наразі недоступні.",
         }
 
     if airports:
         pct = round(us * 100 / airports)
         coverage = (
-            f"{us:,} of {airports:,} airports are in the United States "
-            f"({pct}%), the rest spread over {max(countries - 1, 0)} other territories."
+            f"{us:,} з {airports:,} аеропортів розташовані у США ({pct}%), "
+            f"решта — на {max(countries - 1, 0)} інших територіях."
         )
     else:
-        coverage = "No airports are loaded on this instance yet."
+        coverage = "На цьому інстансі ще не завантажено жодного аеропорту."
 
     return {
         "airport_count": f"{airports:,}",
